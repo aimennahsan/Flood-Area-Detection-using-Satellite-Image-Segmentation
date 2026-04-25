@@ -45,6 +45,7 @@ This project uses a **ResNet34 U-Net** architecture with pretrained ImageNet wei
 
 ##  Repository Structure
 flood-detection/
+
 ├── app.py                    # Streamlit web application
 
 ├── final_flood_model.keras   # Trained model weights
