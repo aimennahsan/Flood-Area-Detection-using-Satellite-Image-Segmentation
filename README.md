@@ -121,3 +121,8 @@ Tversky loss with α=0.7 penalizes missed flood pixels (false negatives) more th
 - OpenCV
 - Albumentations
 
+---
+##  Authors
+Aimen Ahsan
+Eeshal Tahir
+Areesha Fatima
