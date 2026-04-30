@@ -9,16 +9,18 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
+# This sets the segmentation models framework to TensorFlow Keras.
 os.environ['SM_FRAMEWORK'] = 'tf.keras'
 import segmentation_models as sm
 
+# This configures the Streamlit page title, icon, and layout.
 st.set_page_config(
     page_title="Flood Area Detection",
     page_icon=" ",
     layout="wide"
 )
 
-# Loss / metric definitions 
+# This function calculates Dice loss, which measures overlap error between true mask and predicted mask.
 def dice_loss(y_true, y_pred, smooth=1e-6):
     y_true_f     = tf.reshape(y_true, [-1])
     y_pred_f     = tf.reshape(y_pred, [-1])
@@ -27,6 +29,7 @@ def dice_loss(y_true, y_pred, smooth=1e-6):
         tf.reduce_sum(y_true_f) + tf.reduce_sum(y_pred_f) + smooth
     )
 
+# This function calculates Tversky loss, which balances false positives and false negatives.
 def tversky_loss(y_true, y_pred, alpha=0.7, smooth=1e-6):
     y_true_f = tf.reshape(y_true, [-1])
     y_pred_f = tf.reshape(y_pred, [-1])
@@ -35,9 +38,11 @@ def tversky_loss(y_true, y_pred, alpha=0.7, smooth=1e-6):
     fn = tf.reduce_sum(y_true_f * (1 - y_pred_f))
     return 1.0 - (tp + smooth) / (tp + alpha*fn + (1-alpha)*fp + smooth)
 
+# This combines Dice loss and Tversky loss for model loading.
 def combined_loss(y_true, y_pred):
     return dice_loss(y_true, y_pred) + tversky_loss(y_true, y_pred, alpha=0.7)
 
+# This function calculates Intersection over Union after converting predictions into a binary mask.
 def iou_metric(y_true, y_pred):
     y_pred_bin   = tf.cast(y_pred > 0.5, tf.float32)
     y_true_f     = tf.reshape(y_true,     [-1])
@@ -46,6 +51,7 @@ def iou_metric(y_true, y_pred):
     union        = tf.reduce_sum(y_true_f) + tf.reduce_sum(y_pred_f) - intersection
     return (intersection + 1e-6) / (union + 1e-6)
 
+# This function calculates Dice coefficient after thresholding the predicted mask.
 def dice_coef(y_true, y_pred):
     y_pred_bin   = tf.cast(y_pred > 0.5, tf.float32)
     y_true_f     = tf.reshape(y_true,     [-1])
@@ -55,11 +61,12 @@ def dice_coef(y_true, y_pred):
         tf.reduce_sum(y_true_f) + tf.reduce_sum(y_pred_f) + 1e-6
     )
 
-# Preprocessing 
+# This section defines the model backbone and image preprocessing settings.
 BACKBONE         = 'resnet34'
 preprocess_input = sm.get_preprocessing(BACKBONE)
 IMG_SIZE         = 256
 
+# This function normalizes SAR-like image values using percentile clipping.
 def normalize_sar(arr):
     arr = arr.astype(np.float32)
     p2  = np.percentile(arr, 2)
@@ -67,6 +74,7 @@ def normalize_sar(arr):
     arr = np.clip(arr, p2, p98)
     return (arr - p2) / (p98 - p2 + 1e-8)
 
+# This function reads an uploaded image, resizes it, converts it to grayscale, and prepares it for the model.
 def preprocess_image(uploaded_file):
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img_bgr    = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -82,7 +90,7 @@ def preprocess_image(uploaded_file):
     img_3ch   = preprocess_input(img_3ch)
     return img_3ch[np.newaxis, ...], display
 
-#  Model loading 
+# This function loads the trained flood segmentation model only once and reuses it.
 @st.cache_resource
 def load_flood_model():
     return tf.keras.models.load_model(
@@ -95,9 +103,10 @@ def load_flood_model():
         compile=False
     )
 
+# This loads the model into memory.
 model = load_flood_model()
 
-# Shared matplotlib style 
+# This function applies a dark theme style to matplotlib charts.
 def style_ax(ax):
     ax.set_facecolor('#0e1117')
     ax.tick_params(colors='white')
@@ -108,13 +117,13 @@ def style_ax(ax):
         spine.set_edgecolor('#444')
     ax.grid(True, alpha=0.15, color='white')
 
-# Navigation 
+# This sidebar dropdown lets the user switch between the two pages.
 page = st.sidebar.selectbox(
     "Navigation",
     ["Flood Detection", "Image Analysis"]
 )
 
-# PAGE 1 — Flood Detection
+# This page handles image upload, flood prediction, mask display, and overlay display.
 if page == "Flood Detection":
 
     st.title("Flood Area Detection")
@@ -124,6 +133,7 @@ if page == "Flood Detection":
     )
     st.markdown("---")
 
+    # This sidebar section contains prediction settings.
     st.sidebar.markdown("---")
     st.sidebar.header("Settings")
     threshold = st.sidebar.slider(
@@ -133,11 +143,13 @@ if page == "Flood Detection":
     )
     show_raw_prob = st.sidebar.checkbox("Show raw probability map", value=False)
 
+    # This uploader accepts satellite image files from the user.
     uploaded_file = st.file_uploader(
         "Choose a satellite image...",
         type=["jpg", "png", "jpeg", "tif", "tiff"]
     )
 
+    # This block runs only after the user uploads an image.
     if uploaded_file is not None:
 
         img_input, display = preprocess_image(uploaded_file)
@@ -146,11 +158,13 @@ if page == "Flood Detection":
             st.error("Could not read the uploaded file.")
             st.stop()
 
+        # This block runs the model prediction and converts probabilities into a binary flood mask.
         with st.spinner("Running flood detection..."):
             pred      = model.predict(img_input, verbose=0)[0]
             pred_sq   = pred.squeeze()
             pred_mask = (pred_sq > threshold).astype(np.uint8)
 
+        # This saves prediction results in session state so the Image Analysis page can use them.
         st.session_state['pred_sq']   = pred_sq
         st.session_state['pred_mask'] = pred_mask
         st.session_state['display']   = display
@@ -159,6 +173,7 @@ if page == "Flood Detection":
 
         flood_pct = pred_mask.mean() * 100
 
+        # This section displays main prediction metrics.
         st.markdown("### Results")
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Flood Coverage", f"{flood_pct:.2f}%")
@@ -168,10 +183,12 @@ if page == "Flood Detection":
 
         col1, col2, col3 = st.columns(3)
 
+        # This displays the original uploaded image.
         with col1:
             st.image(display, caption="Original Image",
                      use_container_width=True)
 
+        # This displays either the probability map or the binary flood mask.
         with col2:
             if show_raw_prob:
                 prob_raw = pred_sq.copy()
@@ -196,6 +213,7 @@ if page == "Flood Detection":
                 st.image(mask_disp, caption="Predicted Flood Mask",
                          use_container_width=True, clamp=True)
 
+        # This creates and displays a red flood overlay on top of the original image.
         with col3:
             overlay = display.copy()
             overlay[pred_mask == 1] = [220, 50, 50]
@@ -205,6 +223,7 @@ if page == "Flood Detection":
 
         st.markdown("---")
 
+        # This gives a simple flood risk message based on flood coverage percentage.
         if flood_pct < 5:
             st.success(f"Low flood risk detected — {flood_pct:.2f}% of area")
         elif flood_pct < 25:
@@ -212,6 +231,7 @@ if page == "Flood Detection":
         else:
             st.error(f"Severe flooding detected — {flood_pct:.2f}% of area")
 
+        # This note explains the limitation of using RGB images instead of real SAR data.
         st.caption(
             "Note: This model was trained on 2-channel SAR (VH/VV) data. "
             "RGB images are converted to grayscale to simulate SAR input. "
@@ -220,6 +240,7 @@ if page == "Flood Detection":
 
         st.info("Go to Image Analysis in the sidebar to see detailed statistics for this image.")
 
+    # This message is shown before any image is uploaded.
     else:
         st.info("Upload a satellite image above to get started.")
         st.markdown("""
@@ -233,17 +254,19 @@ if page == "Flood Detection":
         **Metrics:** IoU 0.66 | Dice 0.78 on held-out test images
         """)
 
-# PAGE 2 — Image Analysis
+# This page shows detailed statistics and charts for the last uploaded image.
 elif page == "Image Analysis":
 
     st.title("Image Analysis")
     st.markdown("Detailed statistics and analysis for the last uploaded image.")
     st.markdown("---")
 
+    # This prevents the analysis page from running before an image has been uploaded.
     if 'pred_sq' not in st.session_state:
         st.warning("No image analysed yet. Go to Flood Detection and upload an image first.")
         st.stop()
 
+    # This retrieves the saved prediction data from session state.
     pred_sq   = st.session_state['pred_sq']
     pred_mask = st.session_state['pred_mask']
     display   = st.session_state['display']
@@ -253,7 +276,7 @@ elif page == "Image Analysis":
     st.markdown(f"**Analysing:** {filename}")
     st.markdown("---")
 
-    #  Section 1: Per-image metrics 
+    # This section calculates and displays image-level flood metrics.
     st.header("Image Metrics")
 
     flood_pct       = pred_mask.mean() * 100
@@ -282,7 +305,7 @@ elif page == "Image Analysis":
 
     st.markdown("---")
 
-    #  Section 2: Probability distribution 
+    # This section visualizes the distribution of predicted flood probabilities.
     st.header("Pixel Probability Distribution")
     st.markdown(
         "Shows how confident the model is across all pixels. "
@@ -310,11 +333,12 @@ elif page == "Image Analysis":
 
     st.markdown("---")
 
-    #  Section 3: Pixel breakdown 
+    # This section shows the percentage of flooded and non-flooded pixels.
     st.header("Pixel Classification Breakdown")
 
     col_left, col_right = st.columns(2)
 
+    # This pie chart shows the flooded versus non-flooded pixel ratio.
     with col_left:
         fig2, ax2 = plt.subplots(figsize=(5, 5))
         fig2.patch.set_facecolor('#0e1117')
@@ -336,6 +360,7 @@ elif page == "Image Analysis":
         st.pyplot(fig2)
         plt.close()
 
+    # This bar chart shows confident non-flood, uncertain, and confident flood pixels.
     with col_right:
         fig3, ax3 = plt.subplots(figsize=(5, 5))
         fig3.patch.set_facecolor('#0e1117')
@@ -363,7 +388,7 @@ elif page == "Image Analysis":
 
     st.markdown("---")
 
-    #  Section 4: Threshold sensitivity 
+    # This section shows how changing the threshold affects flood coverage.
     st.header("Threshold Sensitivity")
     st.markdown(
         "Shows how flood coverage percentage changes as you move the threshold. "
@@ -394,7 +419,7 @@ elif page == "Image Analysis":
 
     st.markdown("---")
 
-    # Section 5: Summary table
+    # This section creates a summary table of all important metrics.
     st.header("Summary Table")
 
     metrics = [
